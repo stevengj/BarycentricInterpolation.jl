@@ -18,6 +18,7 @@ under the MIT license <https://opensource.org/licenses/MIT>
 module BarycentricInterpolation
 
 using FastGaussQuadrature: gausslegendre
+using StaticArrays: SVector
 
 export Chebyshev1, Chebyshev2, Legendre, Equispaced, ArbitraryPolynomial
 
@@ -26,6 +27,10 @@ export weights, nodes, interpolate, interpolation_matrix, differentiation_matrix
 #-- Node distributions
 
 abstract type AbstractPolynomial{T <:Number} end
+
+const IntOrVal = Union{Integer, Val}
+intval(N::Integer) = Int(N)
+intval(::Val{N}) where {N} = N
 
 for name in [:Chebyshev1, :Chebyshev2, :Legendre, :Equispaced]
     @eval struct $name{T<:Number, X<:AbstractVector{T}, W<:AbstractVector} <:AbstractPolynomial{T}
@@ -38,20 +43,20 @@ for name in [:Chebyshev1, :Chebyshev2, :Legendre, :Equispaced]
             new{T, X, W}(shift, scale, nodes, weights)
         end
     end
-    @eval function $name{T}(N::Integer, start::T, stop::T) where {T <:Number}
+    @eval function $name{T}(N::IntOrVal, start::T, stop::T) where {T <:Number}
         shift = T(stop + start)/2
         scale = T(stop - start)/2
-        (nodes, weights) = nodes_weights($name{T}, Int(N), shift, scale)
-        @assert N+1 == length(nodes)
+        (nodes, weights) = nodes_weights($name{T}, N, shift, scale)
+        @assert intval(N)+1 == length(nodes)
         $name{T, typeof(nodes), typeof(weights)}(shift, scale, nodes, weights)
     end
-    @eval $name{T}(N::Integer, start::Number, stop::Number) where {T} = $name{T}(N, convert(T, start), convert(T, stop))
-    @eval function $name(N::Integer, start::Number, stop::Number)
+    @eval $name{T}(N::IntOrVal, start::Number, stop::Number) where {T} = $name{T}(N, convert(T, start), convert(T, stop))
+    @eval function $name(N::IntOrVal, start::Number, stop::Number)
         start, stop = float.(promote(start, stop))
         $name{typeof(start)}(N, start, stop)
     end
-    @eval $name(N::Integer) = $name(N, -1, 1)
-    @eval $name{T}(N::Integer) where {T} = $name(N, T(-1), T(1))
+    @eval $name(N::IntOrVal) = $name(N, -1, 1)
+    @eval $name{T}(N::IntOrVal) where {T} = $name(N, T(-1), T(1))
     @eval (poly::$name)(y) = interpolate(poly, y)
     @eval (poly::$name)(y, x) = interpolate(poly, y, x)
 end
@@ -79,7 +84,7 @@ degree(poly::AbstractPolynomial) = length(poly.nodes)-1 # assumes every poly has
 
 Return the nodes and weights of the polynomial specified.
 """
-function nodes_weights(::Type{P}, N::Integer, shift=0, scale=1) where {P<:AbstractPolynomial}
+function nodes_weights(::Type{P}, N::IntOrVal, shift=0, scale=1) where {P<:AbstractPolynomial}
     return (nodes(P, N, shift, scale), weights(P, N))
 end
 
@@ -108,6 +113,10 @@ function weights end
 function weights(::Type{P}, N::Integer) where {P<:AbstractPolynomial}
     _N = Int(N)
     return [_weight(P, _N, j) for j = 0:_N]
+end
+
+function weights(::Type{P}, ::Val{N}) where {N, P<:AbstractPolynomial}
+    return SVector(ntuple(j -> _weight(P, N, j-1), Val{N+1}()))
 end
 
 # Eq. (5.1)
@@ -144,11 +153,14 @@ an `AbstractPolynomial` type is passed, one must also pass the degree `N``.
 """
 function nodes end
 
-nodes(poly::Type{<:AbstractPolynomial{T}}, N::Integer) where {T} = nodes(poly, N, zero(T), one(T))
+nodes(poly::Type{<:AbstractPolynomial{T}}, N::IntOrVal) where {T} = nodes(poly, N, zero(T), one(T))
 
 function nodes(::Type{P}, N::Integer, shift::Number, scale::Number) where {P<:AbstractPolynomial}
     _N = Int(N)
     return [_node(P, _N, j)*scale + shift for j = 0:_N]
+end
+function nodes(::Type{P}, ::Val{N}, shift::Number, scale::Number) where {N, P<:AbstractPolynomial}
+    return SVector(ntuple(j -> _node(P, N, j-1)*scale + shift, Val{N+1}()))
 end
 
 nodes(poly::Type{<:Equispaced}, N::Integer, shift::Number, scale::Number) = range(shift - scale, stop=shift + scale, length=Int(N)+1)
